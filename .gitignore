@@ -8,4 +8,4 @@ __pycache__/
 env/
 venv/
 
-data/
+data/Retail.OrderHistory.1.csv
