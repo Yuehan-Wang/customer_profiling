@@ -32,7 +32,7 @@ if uploaded_file:
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(profile, f, ensure_ascii=False, indent=2)
 
-    st.subheader("📋 Inferred Profile")
+    st.subheader("Inferred Profile")
 
     if "raw" in profile:
         st.text(profile["raw"])
