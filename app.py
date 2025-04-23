@@ -10,7 +10,7 @@ from collections import Counter
 import string
 
 st.set_page_config(page_title="User Profiler", layout="wide")
-st.title("🧠 User Profile Inference from Amazon Orders")
+st.title("User Profile Inference from Amazon Orders")
 
 uploaded_file = st.file_uploader("Upload your Amazon Order CSV file:", type=["csv"])
 
@@ -65,5 +65,5 @@ if uploaded_file:
             fig, ax = plt.subplots()
             ax.imshow(wc, interpolation='bilinear')
             ax.axis("off")
-            st.subheader("🔖 Cleaned Word Cloud View")
+            st.subheader("Word Cloud View")
             st.pyplot(fig)
