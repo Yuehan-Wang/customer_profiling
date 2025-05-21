@@ -1,70 +1,105 @@
-import openai
-import os
-from dotenv import load_dotenv
-import logging
-import streamlit as st
+from __future__ import annotations
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('gpt_infer.log')  
-    ]
-)
+import json, os, re, urllib.parse
+from typing import List, Dict, Optional
+
+import openai
+import requests
+from dotenv import load_dotenv
 
 load_dotenv()
+OPENAI_KEY   = os.getenv("OPENAI_API_KEY")
+UNSPLASH_KEY = os.getenv("UNSPLASH_KEY")    
 
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = openai.OpenAI(api_key=OPENAI_KEY)
 
-def infer_user_profile(prompt_text, model="o4-mini-2025-04-16"):
-    system_msg = (
-        "You are a profiling assistant at an advertising company. Given Amazon order summaries (date, item, price, address),\n"
-        "generate a JSON with two keys: 'profile' and 'recommendations'.\n"
-        "- 'profile': a compact dict with high-level traits: age, gender, profession, lifestyle, personality, shopping style, hobbies, etc.\n"
-        "- 'recommendations': list of 3–5 personalized suggestions (products, services, courses, etc.). Each has 'name', 'reason', 'url'.\n"
-        "- 'IMPORTANT': Check if the url is valid. If not, select a valid url from the recommendation.\n"
-        "Keep it short, focused, and avoid repeating the input."
-    )
+UA = {"User-Agent": "Mozilla/5.0", "Accept-Version": "v1"}
+_PLACEHOLDER = "https://via.placeholder.com/120?text=No+Image"
 
-    MAX_LINES = 500  
-    logging.info(f"Input text length: {len(prompt_text)}")
-    st.write(f"Input text length: {len(prompt_text)}")
-    truncated = "\n".join(prompt_text.split("\n")[:MAX_LINES])
+def _amazon_search(keyword: str) -> str:
+    return "https://www.amazon.com/s?k=" + urllib.parse.quote_plus(keyword)
 
-    user_msg = f"Here is the user's Amazon purchase history:\n{truncated}\n\nNow generate the high-level profile."
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg}
-        ]
-    )
-
-    reply = response.choices[0].message.content
-    logging.info(f"GPT Response: {reply}")
-    st.write("GPT:")
-    st.code(reply, language="json")
-    
+def _first_amazon_dp(keyword: str) -> Optional[str]:
+    """
+    DuckDuckGo HTML → first /dp/ASIN link from amazon.com.
+    """
     try:
-        result = eval(reply) if reply.strip().startswith("{") else {"raw": reply.strip()}
-        logging.info(f"Processed result: {result}")
-        st.write("Processed result:")
-        st.json(result)
-    except Exception as e:
-        logging.error(f"Error processing reply: {str(e)}")
-        st.error(f"Error processing reply: {str(e)}")
-        result = {"raw": reply.strip()}
-
-    return result
+        q = urllib.parse.quote_plus(f"{keyword} site:amazon.com/dp")
+        html = requests.get(f"https://duckduckgo.com/html/?q={q}", headers=UA, timeout=5).text
+        html = urllib.parse.unquote(html)
+        m = re.search(r"https://www\.amazon\.com/[^\"]+/dp/[A-Z0-9]{10}", html)
+        return m.group(0) if m else None
+    except Exception:
+        return None
 
 
-if __name__ == "__main__":
-    from data.data_cleaner import clean_order_csv
+def _is_amazon(url: str) -> bool:
+    return url.lower().startswith("https://www.amazon.com")
 
-    text = clean_order_csv("data/Retail.OrderHistory.1.csv")
-    profile = infer_user_profile(text)
-    logging.info(f"Final profile: {profile}")
-    st.write("Final profile:")
-    st.json(profile)
+
+def _unsplash_thumb(keyword: str) -> Optional[str]:
+    if not UNSPLASH_KEY:
+        return None
+    try:
+        r = requests.get(
+            "https://api.unsplash.com/search/photos",
+            params={"query": keyword, "per_page": 1, "orientation": "squarish"},
+            headers={"Authorization": f"Client-ID {UNSPLASH_KEY}", **UA},
+            timeout=4,
+        )
+        r.raise_for_status()
+        hits = r.json().get("results", [])
+        return hits[0]["urls"]["thumb"] if hits else None
+    except Exception:
+        return None
+
+
+def _fix_recs(recs: List[Dict]) -> List[Dict]:
+    out = []
+    for r in recs:
+        name = (r.get("name") or "item").strip()
+        url  = (r.get("url")  or "").strip()
+
+        if not _is_amazon(url):               
+            dp_link = _first_amazon_dp(name)
+            url = dp_link if dp_link else _amazon_search(name)
+
+        r["url"] = url
+        r["img"] = _unsplash_thumb(name) or _PLACEHOLDER
+        out.append(r)
+    return out
+
+
+SYSTEM_PROMPT = (
+    "You are a profiling assistant at an advertising company. Given Amazon order summaries (date, item, price, address),\n"
+    "generate a JSON with two keys: 'profile' and 'recommendations'.\n"
+    "- 'profile': a compact dict with high-level traits: age, gender, profession, lifestyle, personality, shopping style, hobbies, etc.\n"
+    "- 'recommendations': list of 3–5 personalized suggestions (products, services, courses, etc.). Each has 'name', 'reason', 'url'.\n"
+    "- 'IMPORTANT': Check that each url is valid. If not, replace it with a valid Amazon product or search link.\n"
+    "Keep it short, focused, and avoid repeating the input."
+)
+
+def infer_user_profile(cleaned_prompt: str) -> Dict:
+    response = client.chat.completions.create(
+        model="o4-mini-2025-04-16",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": cleaned_prompt},
+        ],
+    )
+
+    reply = response.choices[0].message.content.strip()
+
+    if reply.startswith("```"):
+        reply = re.sub(r"^```(\w+)?", "", reply).rstrip("```").strip()
+
+    try:
+        data: Dict = json.loads(reply)
+    except json.JSONDecodeError:
+        return {"raw_response": reply, "error": "GPT returned non-JSON"}
+
+    if "recommendations" in data:
+        data["recommendations"] = _fix_recs(data["recommendations"])
+
+    return data

@@ -37,10 +37,13 @@ if uploaded_file:
     if "profile" in profile_data:
         st.subheader("Inferred User Profile")
         for key, value in profile_data["profile"].items():
+            if isinstance(value, list):
+                value = ", ".join(str(v) for v in value)
             st.markdown(f"<div style='margin-bottom: 8px;'><b>{key.capitalize()}:</b> {value}</div>", unsafe_allow_html=True)
 
         stopwords = set(STOPWORDS)
-        custom_stops = {"likely", "no", "yes", "(", ")", "/", "&", "to", "the", "with", "and", "or", "of"}
+        custom_stops = {"likely", "no", "yes", "(", ")", "/", "&", "to", "the", "with", "and", "or", "of", "in", "on", "at", "by", "for", "from", "up", "down", "out", "over", "under", "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "some", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "prefers", "prefer", "like", "likes", "dislike", "dislikes", "loves", "love", "hate", "hates", "enjoy", "enjoys", "items", "item", "it", "its", "that", "this", "these", "those", "my", "your", "his", "her", "its", "our", "their", "who", "whom", "which", "what", "this", "these", "those", "my", "your", "his", "her", "its", "our", "their", "who", "whom", "which", "what"}
         stopwords.update(custom_stops)
 
         keywords = []
@@ -67,7 +70,7 @@ if uploaded_file:
                 reason = rec.get("reason", "")
                 url = rec.get("url", "")
                 asin = url.split("/dp/")[-1].split("/")[0] if "/dp/" in url else ""
-                img_url = f"https://images-na.ssl-images-amazon.com/images/P/{asin}.jpg" if asin else "https://via.placeholder.com/100"
+                img_url = rec.get("img") or "https://via.placeholder.com/120"
 
                 card_html = f"""
                 <div style="display: flex; align-items: flex-start; border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
